@@ -1,0 +1,1612 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>問題メモアプリ</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest" crossorigin="anonymous"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
+    body {
+      font-family: 'Inter', sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Animations */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in-up {
+      animation: fadeInUp 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    
+    @keyframes modalFadeIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .animate-modal {
+      animation: modalFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    /* Dragging styles */
+    .folder-item.dragging, .memo-item.dragging {
+      opacity: 0.5;
+      scale: 0.98;
+    }
+
+    /* Hidden element helper */
+    .hidden-force {
+      display: none !important;
+    }
+
+    /* Rich Editor Styling */
+    .rich-editor {
+      min-height: 120px;
+      outline: none;
+    }
+    .rich-editor:empty:before {
+      content: attr(placeholder);
+      color: #9ca3af;
+      pointer-events: none;
+      display: block;
+    }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-800 dark:bg-gray-900 dark:text-gray-100 transition-colors duration-200 min-h-screen flex flex-col pb-20 select-none">
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none"></div>
+
+  <!-- Context Menu -->
+  <div id="contextMenu" class="fixed z-[90] hidden-force pointer-events-auto flex-col gap-1 bg-gray-900 dark:bg-gray-800 p-1.5 rounded-2xl shadow-2xl border border-gray-700 ring-4 ring-black/10 min-w-[160px]">
+    <button id="contextEditBtn" class="hover:bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all">
+      <i data-lucide="edit-3" class="w-4 h-4"></i> 編集する
+    </button>
+    <button id="contextMoveBtn" class="hover:bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all">
+      <i data-lucide="folder-output" class="w-4 h-4"></i> 移動する
+    </button>
+    <button id="contextDeleteBtn" class="hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all">
+      <i data-lucide="trash-2" class="w-4 h-4"></i> 削除する
+    </button>
+  </div>
+
+  <!-- Hidden File Input -->
+  <input type="file" id="fileInput" accept=".json" class="hidden">
+
+  <!-- Header -->
+  <header class="p-3 sticky top-0 z-30 flex items-center justify-between border-b bg-white dark:bg-gray-800 dark:border-gray-700 shadow-sm transition-colors">
+    <!-- Left: Title & Settings -->
+    <div class="flex-1 flex items-center gap-2">
+      <h1 class="text-lg font-bold text-indigo-600 dark:text-indigo-400 hidden sm:block">問題メモアプリ</h1>
+      <h1 class="text-lg font-bold text-indigo-600 dark:text-indigo-400 sm:hidden">問題メモ</h1>
+      <button onclick="openModal('settingsModal')" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="設定">
+        <i data-lucide="settings" class="w-5 h-5"></i>
+      </button>
+    </div>
+
+    <!-- Center: Undo/Redo & Multi-select Toolbar -->
+    <div class="flex items-center gap-2 justify-center flex-1">
+      <div id="normalToolbar" class="flex items-center gap-2">
+        <button id="undoBtn" onclick="undo()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors disabled:opacity-30 disabled:hover:bg-transparent" title="戻る (Ctrl+Z)">
+          <i data-lucide="undo-2" class="w-5 h-5"></i>
+        </button>
+        <button id="redoBtn" onclick="redo()" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors disabled:opacity-30 disabled:hover:bg-transparent" title="進む (Ctrl+Y)">
+          <i data-lucide="redo-2" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Multi-select Controls -->
+      <div id="batchToolbar" class="hidden-force items-center gap-2">
+        <button onclick="toggleSelectAll()" class="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200">
+          全選択
+        </button>
+        <button onclick="openBatchMoveModal()" class="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1 shadow-sm">
+          <i data-lucide="folder-output" class="w-3.5 h-3.5"></i> 移動
+        </button>
+        <button onclick="openBatchDeleteModal()" class="px-3 py-1.5 text-xs font-bold rounded-lg bg-red-600 hover:bg-red-700 text-white flex items-center gap-1 shadow-sm">
+          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> 削除
+        </button>
+      </div>
+    </div>
+
+    <!-- Right: Actions & Batch Toggle Button -->
+    <div class="flex items-center gap-1 sm:gap-2 justify-end flex-1">
+      <button id="batchToggleBtn" onclick="toggleBatchMode()" class="px-2.5 py-1.5 text-xs font-bold rounded-xl border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 transition-colors" title="一括選択">
+        一括選択
+      </button>
+
+      <button onclick="openModal('saveModal')" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="データ保存">
+        <i data-lucide="save" class="w-5 h-5"></i>
+      </button>
+      <button onclick="openModal('loadModal')" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="データの読み込み">
+        <i data-lucide="upload" class="w-5 h-5"></i>
+      </button>
+      <div class="w-px h-6 mx-1 bg-gray-200 dark:bg-gray-700"></div>
+      
+      <button id="addMemoBtn" onclick="openModal('memoModal')" class="p-2 rounded-full hover:bg-indigo-50 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 transition-colors" title="メモを記録（￥キー）">
+        <i data-lucide="pen-square" class="w-6 h-6"></i>
+      </button>
+      <button onclick="openModal('folderModal')" class="p-2 rounded-full hover:bg-indigo-50 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 transition-colors" title="新規フォルダ">
+        <i data-lucide="plus" class="w-7 h-7"></i>
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto p-4 w-full">
+    <!-- Breadcrumbs -->
+    <div id="breadcrumbs" class="flex items-center flex-wrap gap-1 mb-6 text-sm p-3 rounded-xl bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 shadow-sm border border-gray-100 dark:border-gray-700 transition-colors"></div>
+
+    <!-- Folders Section -->
+    <section class="mb-8">
+      <h2 class="text-sm font-bold text-gray-500 dark:text-gray-400 mb-3 ml-1 flex items-center justify-between">
+        <span class="flex items-center gap-2"><i data-lucide="folder" class="w-4 h-4"></i> フォルダ <span class="text-xs font-normal opacity-70">(長押し移動で並び替え)</span></span>
+        <span id="folderBatchHint" class="text-xs text-indigo-500 hidden-force">※選択可能</span>
+      </h2>
+      <div id="foldersContainer" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"></div>
+    </section>
+
+    <!-- Memos Section -->
+    <section>
+      <div class="flex items-center justify-between mb-3 ml-1">
+        <h2 class="text-sm font-bold text-gray-500 dark:text-gray-400 flex items-center gap-2">
+          <i data-lucide="file-text" class="w-4 h-4"></i> メモ書き (間違えた問題) <span class="text-xs font-normal opacity-70">(長押し移動で並び替え)</span>
+        </h2>
+        <button onclick="copyFolderMemosFormatted()" class="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors border border-indigo-100 dark:border-indigo-800 shadow-sm">
+          <i data-lucide="copy" class="w-3.5 h-3.5"></i> フォルダの内容をコピー
+        </button>
+      </div>
+      <div id="memosContainer" class="flex flex-wrap gap-3"></div>
+    </section>
+  </main>
+
+  <!-- Memo Modal -->
+  <div id="memoModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden-force items-center justify-center p-4 z-50">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-modal border border-gray-100 dark:border-gray-700 flex flex-col max-h-[90vh]">
+      <div class="flex justify-between items-center p-4 border-b border-gray-100 dark:border-gray-700">
+        <h3 id="memoModalTitle" class="font-bold text-gray-800 dark:text-gray-100">記録を追加</h3>
+        <button onclick="closeModal('memoModal')" class="text-gray-400 hover:text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-4 overflow-y-auto grow flex flex-col gap-3">
+        <!-- Duplicate Notice Container -->
+        <div id="duplicateNoticeContainer" class="hidden-force"></div>
+
+        <!-- Rich Input Editable Area -->
+        <div id="memoInput" contenteditable="true" placeholder="間違えた問題の内容を入力..." class="rich-editor w-full px-4 py-3 border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-y min-h-[120px]"></div>
+      </div>
+      <div class="p-4 border-t border-gray-100 dark:border-gray-700 flex gap-3">
+        <button onclick="closeModal('memoModal')" class="flex-1 py-3 rounded-xl font-medium transition-colors bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600">キャンセル</button>
+        <button onclick="saveMemo()" class="flex-1 py-3 text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 font-medium transition-colors">完了</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Folder Modal -->
+  <div id="folderModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm items-center justify-center p-4 z-50 hidden-force">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-modal border border-gray-100 dark:border-gray-700">
+      <div class="flex justify-between items-center p-4 border-b border-gray-100 dark:border-gray-700">
+        <h3 id="folderModalTitle" class="font-bold text-gray-800 dark:text-gray-100">新規フォルダ</h3>
+        <button onclick="closeModal('folderModal')" class="text-gray-400 hover:text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-4">
+        <input type="text" id="folderInput" placeholder="フォルダ名を入力..." class="w-full px-4 py-3 border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+        <div class="mt-6 flex gap-3">
+          <button onclick="closeModal('folderModal')" class="flex-1 py-3 rounded-xl font-medium transition-colors bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600">キャンセル</button>
+          <button onclick="saveFolder()" class="flex-1 py-3 text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 font-medium transition-colors">決定</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load Modal -->
+  <div id="loadModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden-force items-center justify-center p-4 z-50">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-modal border border-gray-100 dark:border-gray-700">
+      <div class="flex justify-between items-center p-4 border-b border-gray-100 dark:border-gray-700">
+        <h3 class="font-bold text-gray-800 dark:text-gray-100">データの読み込み</h3>
+        <button onclick="closeModal('loadModal')" class="text-gray-400 hover:text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-4 flex flex-col gap-4">
+        <div class="grid grid-cols-2 gap-3">
+          <button id="loadOptFileBtn" onclick="switchLoadOption('file')" class="p-3 rounded-xl border border-indigo-500 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm">
+            <i data-lucide="file-up" class="w-4 h-4"></i> ファイル選択
+          </button>
+          <button id="loadOptCodeBtn" onclick="switchLoadOption('code')" class="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm">
+            <i data-lucide="code" class="w-4 h-4"></i> コード貼り付け
+          </button>
+        </div>
+
+        <div id="loadOptionFileView" class="flex flex-col items-center justify-center p-6 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-xl gap-3">
+          <i data-lucide="upload-cloud" class="w-10 h-10 text-indigo-500"></i>
+          <p class="text-xs text-gray-500 dark:text-gray-400 text-center">JSON形式のセーブデータファイルを選択してください</p>
+          <button onclick="document.getElementById('fileInput').click()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors">
+            ファイルを探す
+          </button>
+        </div>
+
+        <div id="loadOptionCodeView" class="hidden-force flex flex-col gap-3">
+          <label class="block text-xs font-medium text-gray-700 dark:text-gray-300">セーブデータコード</label>
+          <textarea id="loadCodeInputTextarea" placeholder="ここにセーブデータ（JSONコード）を貼り付けてください..." class="w-full h-32 px-3 py-2 text-xs font-mono border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white rounded-xl focus:outline-none transition-all resize-none"></textarea>
+          <button onclick="executeLoadFromCode()" class="w-full py-3 text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl font-bold text-sm transition-colors shadow-md flex items-center justify-center gap-2">
+            ロードを実行する
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch Move Modal -->
+  <div id="batchMoveModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden-force items-center justify-center p-4 z-[80]">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-modal border border-gray-100 dark:border-gray-700 flex flex-col max-h-[85vh]">
+      <div class="flex justify-between items-center p-4 border-b border-gray-100 dark:border-gray-700">
+        <h3 class="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><i data-lucide="folder-output" class="w-5 h-5 text-indigo-500"></i> 移動先を選択</h3>
+        <button onclick="closeModal('batchMoveModal')" class="text-gray-400 hover:text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div id="folderTreeContainer" class="p-4 overflow-y-auto grow space-y-1"></div>
+      <div class="p-4 border-t border-gray-100 dark:border-gray-700 flex gap-3">
+        <button onclick="closeModal('batchMoveModal')" class="flex-1 py-3 rounded-xl font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
+        <button onclick="executeBatchMove()" class="flex-1 py-3 text-white bg-indigo-600 rounded-xl font-medium hover:bg-indigo-700 transition-colors">ここへ移動</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch Delete Confirmation Modal -->
+  <div id="batchDeleteConfirmModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden-force items-center justify-center p-4 z-[80]">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-modal border border-red-100 dark:border-red-900/30">
+      <div class="flex flex-col items-center justify-center p-6 border-b bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-900/50 text-red-600 dark:text-red-400">
+        <i data-lucide="alert-triangle" class="w-12 h-12 mb-2"></i>
+        <h3 class="font-bold text-lg">一括削除の確認</h3>
+      </div>
+      <div class="p-4">
+        <p id="batchDeleteMsg" class="text-sm text-center mb-6 text-gray-600 dark:text-gray-300">
+          選択した項目を本当に削除しますか？
+        </p>
+        <div class="flex gap-3">
+          <button onclick="closeModal('batchDeleteConfirmModal')" class="flex-1 py-3 rounded-xl font-medium transition-colors bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
+          <button onclick="executeBatchDelete()" class="flex-1 py-3 text-white bg-red-600 rounded-xl hover:bg-red-700 font-medium transition-colors shadow-lg shadow-red-500/30">削除する</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Single Move Folder Modal -->
+  <div id="moveModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden-force items-center justify-center p-4 z-50">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-modal border border-gray-100 dark:border-gray-700">
+      <div class="flex justify-between items-center p-4 border-b border-gray-100 dark:border-gray-700">
+        <h3 class="font-bold text-gray-800 dark:text-gray-100">フォルダを移動</h3>
+        <button onclick="closeModal('moveModal')" class="text-gray-400 hover:text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-4">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 ml-1">移動先フォルダ</label>
+        <select id="moveTargetSelect" class="w-full px-4 py-3 border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+        </select>
+        <div class="mt-6 flex gap-3">
+          <button onclick="closeModal('moveModal')" class="flex-1 py-3 rounded-xl font-medium transition-colors bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
+          <button onclick="executeFolderMove()" class="flex-1 py-3 text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 font-medium transition-colors">移動する</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save Modal -->
+  <div id="saveModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm items-center justify-center p-4 z-50 hidden-force">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-modal border border-gray-100 dark:border-gray-700">
+      <div class="flex justify-between items-center p-4 border-b border-gray-100 dark:border-gray-700">
+        <h3 class="font-bold text-gray-800 dark:text-gray-100">データの保存</h3>
+        <button onclick="closeModal('saveModal')" class="text-gray-400 hover:text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-4 flex flex-col gap-4">
+        <div class="grid grid-cols-2 gap-3">
+          <button id="saveOptFileBtn" onclick="switchSaveOption('file')" class="p-3 rounded-xl border border-indigo-500 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm">
+            <i data-lucide="download" class="w-4 h-4"></i> ファイル保存
+          </button>
+          <button id="saveOptCopyBtn" onclick="switchSaveOption('copy')" class="p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm">
+            <i data-lucide="copy" class="w-4 h-4"></i> コードのコピー
+          </button>
+        </div>
+
+        <div id="saveOptionFileView" class="flex flex-col gap-3">
+          <label class="block text-xs font-medium text-gray-700 dark:text-gray-300">ファイル名</label>
+          <div class="flex items-center gap-2">
+            <input type="text" id="saveFileNameInput" value="mistake_notes" class="w-full px-4 py-2.5 border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+            <span class="text-gray-500 dark:text-gray-400 font-medium text-sm">.json</span>
+          </div>
+          <button onclick="executeSaveToFile()" class="w-full py-3 mt-2 text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl font-bold text-sm transition-colors shadow-md flex items-center justify-center gap-2">
+            <i data-lucide="download" class="w-4 h-4"></i> ファイルとして保存
+          </button>
+        </div>
+
+        <div id="saveOptionCopyView" class="hidden-force flex flex-col gap-3">
+          <label class="block text-xs font-medium text-gray-700 dark:text-gray-300">セーブデータコード（自動生成）</label>
+          <textarea id="saveCodePreviewTextarea" readonly class="w-full h-28 px-3 py-2 text-xs font-mono border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white rounded-xl focus:outline-none transition-all resize-none"></textarea>
+          <button onclick="executeCopySaveCode()" class="w-full py-3 text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl font-bold text-sm transition-colors shadow-md flex items-center justify-center gap-2">
+            <i data-lucide="copy" class="w-4 h-4"></i> セーブデータをコピーする
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm items-center justify-center p-4 z-50 hidden-force">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-modal border border-gray-100 dark:border-gray-700 flex flex-col max-h-[90vh]">
+      <div class="flex justify-between items-center p-4 border-b border-gray-100 dark:border-gray-700 shrink-0">
+        <h3 class="font-bold flex items-center gap-2 text-gray-800 dark:text-gray-100"><i data-lucide="settings" class="w-4 h-4"></i> 設定</h3>
+        <button onclick="closeModal('settingsModal')" class="text-gray-400 hover:text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      
+      <div class="p-5 overflow-y-auto grow space-y-6">
+        <div>
+          <h4 class="text-sm font-bold mb-3 text-gray-500 dark:text-gray-400">操作・動作設定</h4>
+          <div class="space-y-3">
+            <label class="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 cursor-pointer">
+              <span class="text-sm font-medium">Enterキーで追加 / 完了</span>
+              <input type="checkbox" id="enterToSubmitToggle" onchange="toggleSetting('enterToSubmit')" class="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500">
+            </label>
+            
+            <label class="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 cursor-pointer">
+              <span class="text-sm font-medium">一括選択にフォルダも含める</span>
+              <input type="checkbox" id="batchIncludeFoldersToggle" onchange="toggleSetting('batchIncludeFolders')" class="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500">
+            </label>
+
+            <label class="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 cursor-pointer">
+              <div class="flex flex-col pr-2">
+                <span class="text-sm font-medium">空白とコロンの自動相互変換</span>
+                <span class="text-xs text-gray-400 font-normal">保存時：半角空白⇔半角コロン(:) / 全角空白⇔全角コロン(：)</span>
+              </div>
+              <input type="checkbox" id="convertSpaceColonToggle" onchange="toggleSetting('convertSpaceColon')" class="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500 shrink-0">
+            </label>
+
+            <label class="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 cursor-pointer">
+              <div class="flex flex-col pr-2">
+                <span class="text-sm font-medium">連続する空白を1つにまとめる</span>
+                <span class="text-xs text-gray-400 font-normal">保存時：2つ以上連続する空白（半角/全角）を1つに縮小</span>
+              </div>
+              <input type="checkbox" id="collapseMultipleSpacesToggle" onchange="toggleSetting('collapseMultipleSpaces')" class="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500 shrink-0">
+            </label>
+
+            <label class="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 cursor-pointer">
+              <div class="flex flex-col pr-2">
+                <span class="text-sm font-medium">「. 」(ピリオド＋空白) を半角空白のみにする</span>
+                <span class="text-xs text-gray-400 font-normal">保存時：「. 」(半角ピリオド＋半角空白)を「 」(半角空白)に変換</span>
+              </div>
+              <input type="checkbox" id="convertPeriodSpaceToggle" onchange="toggleSetting('convertPeriodSpace')" class="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500 shrink-0">
+            </label>
+          </div>
+        </div>
+
+        <!-- Theme -->
+        <div>
+          <h4 class="text-sm font-bold mb-3 text-gray-500 dark:text-gray-400">テーマ</h4>
+          <div class="flex gap-3">
+            <button onclick="setTheme('light')" id="theme-light-btn" class="flex-1 py-2 rounded-lg border font-medium">ライト</button>
+            <button onclick="setTheme('dark')" id="theme-dark-btn" class="flex-1 py-2 rounded-lg border font-medium">ダーク</button>
+          </div>
+        </div>
+
+        <!-- Font Size -->
+        <div>
+          <h4 class="text-sm font-bold mb-3 text-gray-500 dark:text-gray-400">文字の大きさ</h4>
+          <div class="flex gap-2">
+            <button onclick="setFontSize('small')" id="font-small-btn" class="flex-1 py-2 rounded-lg border font-medium">小</button>
+            <button onclick="setFontSize('medium')" id="font-medium-btn" class="flex-1 py-2 rounded-lg border font-medium">中</button>
+            <button onclick="setFontSize('large')" id="font-large-btn" class="flex-1 py-2 rounded-lg border font-medium">大</button>
+          </div>
+        </div>
+      </div>
+      
+      <div class="p-4 border-t border-gray-100 dark:border-gray-700 shrink-0">
+        <button onclick="closeModal('settingsModal')" class="w-full py-3 text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 font-medium transition-colors">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirm Modal -->
+  <div id="deleteConfirmModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden-force items-center justify-center p-4 z-[100]">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-modal border border-red-100 dark:border-red-900/30">
+      <div class="flex flex-col items-center justify-center p-6 border-b bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-900/50 text-red-600 dark:text-red-400">
+        <i data-lucide="alert-triangle" class="w-12 h-12 mb-2"></i>
+        <h3 class="font-bold text-lg">本当に削除しますか？</h3>
+      </div>
+      <div class="p-4">
+        <p class="text-sm text-center mb-6 text-gray-600 dark:text-gray-300">
+          この項目を削除します。元には戻せません。
+        </p>
+        <div class="flex gap-3">
+          <button onclick="closeModal('deleteConfirmModal')" class="flex-1 py-3 rounded-xl font-medium transition-colors bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">キャンセル</button>
+          <button onclick="executeSingleDelete()" class="flex-1 py-3 text-white bg-red-600 rounded-xl hover:bg-red-700 font-medium transition-colors shadow-lg shadow-red-500/30">削除する</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- Utilities ---
+    const generateId = () => Math.random().toString(36).substring(2, 9);
+    const escapeHTML = (str) => {
+      if(!str) return '';
+      return str.replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      }[tag]));
+    };
+
+    // 空白/コロンの相互変換ヘルパー関数
+    function convertSpacesAndColons(str) {
+      if (!str) return str;
+      return str.replace(/[ :　：]/g, match => {
+        switch (match) {
+          case ' ': return ':';
+          case ':': return ' ';
+          case '　': return '：';
+          case '：': return '　';
+          default: return match;
+        }
+      });
+    }
+
+    // 連続空白を1つにまとめるヘルパー関数
+    function collapseSpaces(str) {
+      if (!str) return str;
+      return str.replace(/ {2,}/g, ' ').replace(/　{2,}/g, '　');
+    }
+
+    // 「. 」(ピリオド＋空白) を半角空白のみにするヘルパー関数
+    function convertPeriodSpace(str) {
+      if (!str) return str;
+      return str.replace(/\. /g, ' ');
+    }
+
+    // --- Application State ---
+    let appState = {
+      folders: [{ id: 'root', name: 'すべてのノート', parentId: null }],
+      memos: []
+    };
+    
+    let defaultSettings = {
+      theme: 'light',
+      fontSize: 'medium',
+      enterToSubmit: true,
+      batchIncludeFolders: true,
+      convertSpaceColon: false,
+      collapseMultipleSpaces: false,
+      convertPeriodSpace: false
+    };
+    let settings = { ...defaultSettings };
+
+    let currentFolderId = 'root';
+    let pastHistory = [];
+    let futureHistory = [];
+
+    // Long press & Dragging state
+    let pointerTimer = null;
+    let dragStartCoords = { x: 0, y: 0 };
+    let longPressTriggeredPos = { x: 0, y: 0 };
+    let isLongPressed = false;
+    let draggedItemId = null;
+    let draggedItemType = null;
+    let isDraggingItem = false;
+    let contextMenuData = null;
+
+    // Batch Select state
+    let isBatchMode = false;
+    let selectedFolderIds = new Set();
+    let selectedMemoIds = new Set();
+
+    // Edit modal states
+    let editingFolderId = null;
+    let editingMemoId = null;
+    let selectedBatchTargetFolderId = null;
+    let itemToDelete = null;
+    let folderToMove = null;
+
+    // --- Initialize ---
+    function init() {
+      const savedData = localStorage.getItem('mistake_app_data');
+      if (savedData) {
+        try {
+          const parsed = JSON.parse(savedData);
+          if (parsed.folders && parsed.memos) appState = parsed;
+        } catch(e) {}
+      }
+
+      const savedSettings = localStorage.getItem('mistake_app_settings');
+      if (savedSettings) {
+        try {
+          settings = { ...defaultSettings, ...JSON.parse(savedSettings) };
+        } catch(e) {}
+      }
+
+      applyTheme();
+      renderAll();
+      setupEventListeners();
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function saveToStorage() {
+      localStorage.setItem('mistake_app_data', JSON.stringify(appState));
+    }
+    
+    function saveSettings() {
+      localStorage.setItem('mistake_app_settings', JSON.stringify(settings));
+      applyTheme();
+      renderAll();
+    }
+
+    function updateState(newState) {
+      pastHistory.push(JSON.parse(JSON.stringify(appState)));
+      appState = JSON.parse(JSON.stringify(newState));
+      futureHistory = [];
+      saveToStorage();
+      renderAll();
+    }
+
+    function applyTheme() {
+      if (settings.theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+
+    // --- Rendering Functions ---
+    function renderAll() {
+      renderBreadcrumbs();
+      renderFolders();
+      renderMemos();
+      updateButtons();
+      renderSettingsModal();
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function updateButtons() {
+      const undoBtn = document.getElementById('undoBtn');
+      const redoBtn = document.getElementById('redoBtn');
+      if (undoBtn) undoBtn.disabled = pastHistory.length === 0;
+      if (redoBtn) redoBtn.disabled = futureHistory.length === 0;
+    }
+
+    function renderBreadcrumbs() {
+      const container = document.getElementById('breadcrumbs');
+      if (!container) return;
+      const crumbs = [];
+      let currId = currentFolderId;
+      
+      while (currId) {
+        const folder = appState.folders.find(f => f.id === currId);
+        if (folder) {
+          crumbs.unshift(folder);
+          currId = folder.parentId;
+        } else {
+          break;
+        }
+      }
+
+      container.innerHTML = crumbs.map((crumb, index) => {
+        const isLast = index === crumbs.length - 1;
+        const classes = isLast 
+          ? "font-bold text-gray-900 dark:text-white" 
+          : "hover:text-indigo-500 cursor-pointer transition-colors";
+        
+        return `<span class="py-1 ${classes}" ${!isLast ? `onclick="changeFolder('${crumb.id}')"` : ''}>
+                  ${escapeHTML(crumb.name)}
+                </span>
+                ${!isLast ? `<i data-lucide="chevron-right" class="w-4 h-4 mx-1"></i>` : ''}`;
+      }).join('');
+    }
+
+    function renderFolders() {
+      const container = document.getElementById('foldersContainer');
+      if (!container) return;
+      const childFolders = appState.folders.filter(f => f.parentId === currentFolderId);
+      
+      if (childFolders.length === 0) {
+        container.innerHTML = `<p class="text-gray-400 text-sm ml-2">フォルダはありません</p>`;
+        return;
+      }
+
+      container.innerHTML = '';
+      childFolders.forEach(folder => {
+        const isSelected = selectedFolderIds.has(folder.id);
+        const div = document.createElement('div');
+        div.className = `folder-item bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border ${isSelected ? 'ring-2 ring-indigo-500 border-indigo-600' : 'border-gray-100 dark:border-gray-700'} hover:border-indigo-300 dark:hover:border-indigo-500 cursor-pointer flex items-center justify-between group transition-all select-none`;
+        div.dataset.folderId = folder.id;
+        
+        div.addEventListener('pointerdown', (e) => onFolderPointerDown(e, folder.id));
+        div.addEventListener('pointermove', (e) => onFolderPointerMove(e, folder.id));
+        div.addEventListener('pointerup', (e) => onFolderPointerUp(e, folder.id));
+        div.addEventListener('pointercancel', () => cleanupItemDragState());
+        div.addEventListener('contextmenu', e => e.preventDefault());
+
+        const selectIcon = (isBatchMode && settings.batchIncludeFolders) ? `
+          <div class="w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-300 dark:border-gray-600'}">
+            ${isSelected ? '<i data-lucide="check" class="w-3.5 h-3.5"></i>' : ''}
+          </div>
+        ` : '';
+
+        div.innerHTML = `
+          <div class="flex items-center gap-3 w-full pointer-events-none">
+            ${selectIcon}
+            <div class="text-indigo-500 dark:text-indigo-400">
+              <i data-lucide="folder" class="w-6 h-6"></i>
+            </div>
+            <span class="font-medium text-gray-700 dark:text-gray-200 truncate flex-1">${escapeHTML(folder.name)}</span>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    function renderMemos() {
+      const container = document.getElementById('memosContainer');
+      if (!container) return;
+      
+      const memos = appState.memos.filter(m => m.folderId === currentFolderId);
+
+      if (memos.length === 0) {
+        container.innerHTML = `<p class="text-gray-400 text-sm ml-2">メモはありません</p>`;
+        return;
+      }
+
+      container.innerHTML = '';
+      memos.forEach(memo => {
+        const isSelected = selectedMemoIds.has(memo.id);
+        const div = document.createElement('div');
+        
+        const fontSizeClass = settings.fontSize === 'small' ? 'text-xs md:text-sm' : 
+                              settings.fontSize === 'large' ? 'text-base md:text-xl' : 
+                              'text-sm md:text-base';
+
+        div.className = `memo-item relative flex-auto min-w-[200px] max-w-full p-4 rounded-xl border transition-all flex flex-col justify-between gap-3 group select-none cursor-pointer shadow-sm bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-800 dark:text-gray-100 ${isSelected ? 'ring-2 ring-indigo-500 border-indigo-600' : ''}`;
+        div.dataset.memoId = memo.id;
+        
+        div.addEventListener('pointerdown', (e) => onMemoPointerDown(e, memo.id));
+        div.addEventListener('pointermove', (e) => onMemoPointerMove(e, memo.id));
+        div.addEventListener('pointerup', (e) => onMemoPointerUp(e, memo.id));
+        div.addEventListener('pointercancel', () => cleanupItemDragState());
+        div.addEventListener('contextmenu', e => e.preventDefault());
+
+        const selectIcon = isBatchMode ? `
+          <div class="w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-300 dark:border-gray-600'}">
+            ${isSelected ? '<i data-lucide="check" class="w-3.5 h-3.5"></i>' : ''}
+          </div>
+        ` : '';
+
+        div.innerHTML = `
+          <div class="flex items-start justify-between gap-3 w-full pointer-events-none">
+            <div class="flex items-start gap-2 flex-1">
+              ${selectIcon}
+              <div class="whitespace-pre-wrap break-words flex-1 leading-relaxed ${fontSizeClass}">
+                ${memo.html || escapeHTML(memo.text)}
+              </div>
+            </div>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    function changeFolder(id) {
+      currentFolderId = id;
+      renderAll();
+    }
+
+    // --- Pointer Interactions ---
+    function onFolderPointerDown(e, folderId) {
+      if (e.button !== 0 && e.button !== undefined) return;
+      if (isBatchMode) return;
+
+      dragStartCoords = { x: e.clientX, y: e.clientY };
+      draggedItemId = folderId;
+      draggedItemType = 'folder';
+      isLongPressed = false;
+      isDraggingItem = false;
+
+      pointerTimer = setTimeout(() => {
+        isLongPressed = true;
+        longPressTriggeredPos = { x: e.clientX, y: e.clientY };
+        if (navigator.vibrate) navigator.vibrate(50);
+      }, 500);
+    }
+
+    function onFolderPointerMove(e, folderId) {
+      if (!draggedItemId || draggedItemType !== 'folder') return;
+      const dist = Math.hypot(e.clientX - dragStartCoords.x, e.clientY - dragStartCoords.y);
+
+      if (dist > 10 && pointerTimer && !isLongPressed) {
+        clearTimeout(pointerTimer);
+        pointerTimer = null;
+      }
+
+      if (isLongPressed) {
+        const dragDist = Math.hypot(e.clientX - longPressTriggeredPos.x, e.clientY - longPressTriggeredPos.y);
+        if (dragDist > 15) {
+          isDraggingItem = true;
+          const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.folder-item');
+          if (target && target.dataset.folderId && target.dataset.folderId !== folderId) {
+            swapFolders(folderId, target.dataset.folderId);
+            longPressTriggeredPos = { x: e.clientX, y: e.clientY };
+          }
+        }
+      }
+    }
+
+    function onFolderPointerUp(e, folderId) {
+      if (pointerTimer) {
+        clearTimeout(pointerTimer);
+        pointerTimer = null;
+      }
+
+      if (isBatchMode) {
+        if (settings.batchIncludeFolders) toggleFolderSelection(folderId);
+        cleanupItemDragState();
+        return;
+      }
+
+      if (isLongPressed && !isDraggingItem) {
+        contextMenuData = { type: 'folder', id: folderId, x: e.clientX, y: e.clientY };
+        showContextMenu();
+      } else if (!isLongPressed && !isDraggingItem) {
+        changeFolder(folderId);
+      }
+
+      cleanupItemDragState();
+    }
+
+    function onMemoPointerDown(e, memoId) {
+      if (e.button !== 0 && e.button !== undefined) return;
+      if (isBatchMode) return;
+
+      if (draggedItemId && draggedItemType === 'memo' && isLongPressed && draggedItemId !== memoId) {
+        swapMemos(draggedItemId, memoId);
+        cleanupItemDragState();
+        return;
+      }
+
+      dragStartCoords = { x: e.clientX, y: e.clientY };
+      draggedItemId = memoId;
+      draggedItemType = 'memo';
+      isLongPressed = false;
+      isDraggingItem = false;
+
+      pointerTimer = setTimeout(() => {
+        isLongPressed = true;
+        longPressTriggeredPos = { x: e.clientX, y: e.clientY };
+        if (navigator.vibrate) navigator.vibrate(50);
+        showToast("他のメモをタップして入れ替え");
+      }, 500);
+    }
+
+    function onMemoPointerMove(e, memoId) {
+      if (!draggedItemId || draggedItemType !== 'memo') return;
+      const dist = Math.hypot(e.clientX - dragStartCoords.x, e.clientY - dragStartCoords.y);
+
+      if (dist > 10 && pointerTimer && !isLongPressed) {
+        clearTimeout(pointerTimer);
+        pointerTimer = null;
+      }
+    }
+
+    function onMemoPointerUp(e, memoId) {
+      if (pointerTimer) {
+        clearTimeout(pointerTimer);
+        pointerTimer = null;
+      }
+
+      if (isBatchMode) {
+        toggleMemoSelection(memoId);
+        cleanupItemDragState();
+        return;
+      }
+
+      if (isLongPressed && !isDraggingItem) {
+        contextMenuData = { type: 'memo', id: memoId, x: e.clientX, y: e.clientY };
+        showContextMenu();
+      } else if (!isLongPressed && !isDraggingItem) {
+        const memo = appState.memos.find(m => m.id === memoId);
+        if (memo) copyToClipboard(memo.text);
+      }
+
+      cleanupItemDragState();
+    }
+
+    function swapFolders(id1, id2) {
+      const idx1 = appState.folders.findIndex(f => f.id === id1);
+      const idx2 = appState.folders.findIndex(f => f.id === id2);
+
+      if (idx1 !== -1 && idx2 !== -1) {
+        const newState = { ...appState, folders: [...appState.folders] };
+        const temp = newState.folders[idx1];
+        newState.folders[idx1] = newState.folders[idx2];
+        newState.folders[idx2] = temp;
+        updateState(newState);
+      }
+    }
+
+    function swapMemos(id1, id2) {
+      const idx1 = appState.memos.findIndex(m => m.id === id1);
+      const idx2 = appState.memos.findIndex(m => m.id === id2);
+
+      if (idx1 !== -1 && idx2 !== -1) {
+        const newState = { ...appState, memos: [...appState.memos] };
+        const temp = newState.memos[idx1];
+        newState.memos[idx1] = newState.memos[idx2];
+        newState.memos[idx2] = temp;
+        updateState(newState);
+      }
+    }
+
+    function cleanupItemDragState() {
+      if (pointerTimer) clearTimeout(pointerTimer);
+      pointerTimer = null;
+      draggedItemId = null;
+      draggedItemType = null;
+      isLongPressed = false;
+      isDraggingItem = false;
+    }
+
+    // --- Context Menu Actions ---
+    function showContextMenu() {
+      if (!contextMenuData) return;
+      const menu = document.getElementById('contextMenu');
+      const moveBtn = document.getElementById('contextMoveBtn');
+      if (!menu) return;
+
+      if (contextMenuData.type === 'memo') {
+        if (moveBtn) moveBtn.classList.add('hidden-force');
+      } else {
+        if (moveBtn) moveBtn.classList.remove('hidden-force');
+      }
+
+      menu.classList.remove('hidden-force');
+      menu.classList.add('flex');
+
+      let left = contextMenuData.x + 10;
+      let top = Math.max(contextMenuData.y - 50, 10);
+      if (left + 170 > window.innerWidth) left = window.innerWidth - 180;
+
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    }
+
+    function hideContextMenu() {
+      const menu = document.getElementById('contextMenu');
+      if (menu) menu.classList.add('hidden-force');
+      setTimeout(() => { contextMenuData = null; }, 50);
+    }
+
+    // --- Single Folder/Memo Creation and Saving ---
+    function saveFolder() {
+      const input = document.getElementById('folderInput');
+      const name = input.value.trim();
+      if (!name) return;
+
+      if (editingFolderId) {
+        const newState = {
+          ...appState,
+          folders: appState.folders.map(f => f.id === editingFolderId ? { ...f, name } : f)
+        };
+        updateState(newState);
+        editingFolderId = null;
+      } else {
+        const newState = { ...appState, folders: [...appState.folders] };
+        newState.folders.push({
+          id: generateId(),
+          name,
+          parentId: currentFolderId
+        });
+        updateState(newState);
+      }
+
+      input.value = '';
+      closeModal('folderModal');
+    }
+
+    function saveMemo() {
+      const input = document.getElementById('memoInput');
+      let html = input.innerHTML.trim();
+      let text = input.innerText.trim();
+      
+      // ￥, \, ＠, @ を除去
+      text = text.replace(/[\\￥＠@]/g, '');
+      html = html.replace(/[\\￥＠@]/g, '');
+
+      // 「. 」変換機能がONの場合
+      if (settings.convertPeriodSpace) {
+        text = convertPeriodSpace(text);
+        html = convertPeriodSpace(html);
+      }
+
+      // 連続空白の結合機能がONの場合
+      if (settings.collapseMultipleSpaces) {
+        text = collapseSpaces(text);
+        html = collapseSpaces(html);
+      }
+
+      // 設定がONの場合、半角空白⇔半角コロン(:) / 全角空白⇔全角コロン(：)
+      if (settings.convertSpaceColon) {
+        text = convertSpacesAndColons(text);
+        html = convertSpacesAndColons(html);
+      }
+
+      if (!text && !html) return;
+
+      // 重複チェック（新規追加時）
+      if (!editingMemoId) {
+        const duplicate = appState.memos.find(m => 
+          m.folderId === currentFolderId && m.text.trim() === text
+        );
+        if (duplicate) {
+          showToast("同じ内容のメモが存在するため追加できません");
+          return;
+        }
+      }
+
+      if (editingMemoId) {
+        const newState = {
+          ...appState,
+          memos: appState.memos.map(m => m.id === editingMemoId ? {
+            ...m, text, html
+          } : m)
+        };
+        updateState(newState);
+        editingMemoId = null;
+      } else {
+        const newState = { ...appState, memos: [...appState.memos] };
+        newState.memos.push({
+          id: generateId(),
+          text,
+          html,
+          folderId: currentFolderId
+        });
+        updateState(newState);
+      }
+
+      input.innerHTML = '';
+      closeModal('memoModal');
+    }
+
+    // --- Duplicate Check & Navigation ---
+    function checkDuplicateMemo() {
+      const input = document.getElementById('memoInput');
+      const noticeContainer = document.getElementById('duplicateNoticeContainer');
+      if (!input || !noticeContainer) return;
+
+      let text = input.innerText.trim().replace(/[\\￥＠@]/g, '');
+      if (settings.convertPeriodSpace) {
+        text = convertPeriodSpace(text);
+      }
+      if (settings.collapseMultipleSpaces) {
+        text = collapseSpaces(text);
+      }
+      if (settings.convertSpaceColon) {
+        text = convertSpacesAndColons(text);
+      }
+
+      if (!text) {
+        noticeContainer.classList.add('hidden-force');
+        noticeContainer.dataset.memoId = '';
+        return;
+      }
+
+      const duplicate = appState.memos.find(m => 
+        m.folderId === currentFolderId && 
+        m.text.trim() === text && 
+        m.id !== editingMemoId
+      );
+
+      if (duplicate) {
+        noticeContainer.classList.remove('hidden-force');
+        noticeContainer.innerHTML = `
+          <div onclick="openDuplicateMemoEdit('${duplicate.id}')" class="p-2.5 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700/50 rounded-xl text-amber-800 dark:text-amber-200 text-xs font-medium cursor-pointer flex items-center justify-between hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors">
+            <span class="flex items-center gap-1.5"><i data-lucide="alert-circle" class="w-4 h-4 text-amber-600 dark:text-amber-400"></i> 同じ内容のメモがこのフォルダに存在します (クリックまたは＠キーで編集)</span>
+            <span class="text-xs font-bold underline">編集する</span>
+          </div>
+        `;
+        noticeContainer.dataset.memoId = duplicate.id;
+        if (window.lucide) lucide.createIcons();
+      } else {
+        noticeContainer.classList.add('hidden-force');
+        noticeContainer.dataset.memoId = '';
+      }
+    }
+
+    function openDuplicateMemoEdit(memoId) {
+      editingMemoId = memoId;
+      const memo = appState.memos.find(m => m.id === memoId);
+      if (memo) {
+        document.getElementById('memoModalTitle').textContent = '記録を編集';
+        document.getElementById('memoInput').innerHTML = memo.html || escapeHTML(memo.text);
+        checkDuplicateMemo();
+        showToast('既存のメモの編集画面に移動しました');
+      }
+    }
+
+    // --- Format & Copy Folder Memos ---
+    function copyFolderMemosFormatted() {
+      const currentMemos = appState.memos.filter(m => m.folderId === currentFolderId);
+      if (currentMemos.length === 0) {
+        showToast("このフォルダにはメモがありません");
+        return;
+      }
+
+      const formattedLines = currentMemos.map((memo, index) => {
+        const itemNumber = index + 1;
+        if (itemNumber % 10 === 1) {
+          return `@ ${memo.text}`;
+        } else {
+          return `・${memo.text}`;
+        }
+      });
+
+      const copyText = formattedLines.join('\n');
+      copyToClipboard(copyText);
+      showToast("フォルダ内のメモをコピーしました");
+    }
+
+    // --- Batch Selection Toggle ---
+    function toggleBatchMode() {
+      isBatchMode = !isBatchMode;
+      selectedFolderIds.clear();
+      selectedMemoIds.clear();
+
+      const batchBtn = document.getElementById('batchToggleBtn');
+      const normalBar = document.getElementById('normalToolbar');
+      const batchBar = document.getElementById('batchToolbar');
+      const folderHint = document.getElementById('folderBatchHint');
+
+      if (isBatchMode) {
+        batchBtn.classList.add('bg-indigo-600', 'text-white');
+        normalBar.classList.add('hidden-force');
+        batchBar.classList.remove('hidden-force');
+        batchBar.classList.add('flex');
+        if (settings.batchIncludeFolders) folderHint.classList.remove('hidden-force');
+      } else {
+        batchBtn.classList.remove('bg-indigo-600', 'text-white');
+        normalBar.classList.remove('hidden-force');
+        batchBar.classList.add('hidden-force');
+        batchBar.classList.remove('flex');
+        folderHint.classList.add('hidden-force');
+      }
+
+      renderAll();
+    }
+
+    function toggleMemoSelection(id) {
+      if (selectedMemoIds.has(id)) selectedMemoIds.delete(id);
+      else selectedMemoIds.add(id);
+      renderMemos();
+    }
+
+    function toggleFolderSelection(id) {
+      if (selectedFolderIds.has(id)) selectedFolderIds.delete(id);
+      else selectedFolderIds.add(id);
+      renderFolders();
+    }
+
+    function toggleSelectAll() {
+      const currentMemos = appState.memos.filter(m => m.folderId === currentFolderId);
+      const currentFolders = appState.folders.filter(f => f.parentId === currentFolderId);
+
+      const allMemosSelected = currentMemos.every(m => selectedMemoIds.has(m.id));
+
+      if (allMemosSelected) {
+        currentMemos.forEach(m => selectedMemoIds.delete(m.id));
+        if (settings.batchIncludeFolders) currentFolders.forEach(f => selectedFolderIds.delete(f.id));
+      } else {
+        currentMemos.forEach(m => selectedMemoIds.add(m.id));
+        if (settings.batchIncludeFolders) currentFolders.forEach(f => selectedFolderIds.add(f.id));
+      }
+
+      renderFolders();
+      renderMemos();
+    }
+
+    // --- Save Options ---
+    function switchSaveOption(opt) {
+      const fileBtn = document.getElementById('saveOptFileBtn');
+      const copyBtn = document.getElementById('saveOptCopyBtn');
+      const fileView = document.getElementById('saveOptionFileView');
+      const copyView = document.getElementById('saveOptionCopyView');
+
+      if (!fileBtn || !copyBtn) return;
+
+      if (opt === 'file') {
+        fileBtn.className = "p-3 rounded-xl border border-indigo-500 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm";
+        copyBtn.className = "p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm";
+        fileView.classList.remove('hidden-force');
+        copyView.classList.add('hidden-force');
+      } else {
+        copyBtn.className = "p-3 rounded-xl border border-indigo-500 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm";
+        fileBtn.className = "p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm";
+        copyView.classList.remove('hidden-force');
+        fileView.classList.add('hidden-force');
+
+        const exportData = { ...appState, settings };
+        document.getElementById('saveCodePreviewTextarea').value = JSON.stringify(exportData, null, 2);
+      }
+    }
+
+    function executeSaveToFile() {
+      const nameInput = document.getElementById('saveFileNameInput').value.trim();
+      const fileName = nameInput ? `${nameInput}.json` : 'mistake_notes.json';
+      const exportData = { ...appState, settings };
+      const jsonString = JSON.stringify(exportData, null, 2);
+
+      const blob = new Blob([jsonString], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast("ファイルに保存しました");
+      closeModal('saveModal');
+    }
+
+    function executeCopySaveCode() {
+      const exportData = { ...appState, settings };
+      copyToClipboard(JSON.stringify(exportData));
+      closeModal('saveModal');
+    }
+
+    // --- Load Options ---
+    function switchLoadOption(opt) {
+      const fileBtn = document.getElementById('loadOptFileBtn');
+      const codeBtn = document.getElementById('loadOptCodeBtn');
+      const fileView = document.getElementById('loadOptionFileView');
+      const codeView = document.getElementById('loadOptionCodeView');
+
+      if (!fileBtn || !codeBtn) return;
+
+      if (opt === 'file') {
+        fileBtn.className = "p-3 rounded-xl border border-indigo-500 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm";
+        codeBtn.className = "p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm";
+        fileView.classList.remove('hidden-force');
+        codeView.classList.add('hidden-force');
+      } else {
+        codeBtn.className = "p-3 rounded-xl border border-indigo-500 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm";
+        fileBtn.className = "p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 font-bold flex items-center justify-center gap-2 transition-all text-xs sm:text-sm";
+        codeView.classList.remove('hidden-force');
+        fileView.classList.add('hidden-force');
+      }
+    }
+
+    function executeLoadFromCode() {
+      const codeText = document.getElementById('loadCodeInputTextarea').value.trim();
+      if (!codeText) return;
+      try {
+        const parsed = JSON.parse(codeText);
+        if (parsed.folders && parsed.memos) {
+          appState = { folders: parsed.folders, memos: parsed.memos };
+          if (parsed.settings) settings = { ...defaultSettings, ...parsed.settings };
+          saveToStorage();
+          currentFolderId = 'root';
+          renderAll();
+          showToast("コードからデータを読み込みました");
+          closeModal('loadModal');
+        } else {
+          showToast("無効なデータ形式です");
+        }
+      } catch (err) {
+        showToast("JSONの読み込みに失敗しました");
+      }
+    }
+
+    // --- Settings Modal & Toggles ---
+    function renderSettingsModal() {
+      const isDark = settings.theme === 'dark';
+
+      const enterToSubmit = document.getElementById('enterToSubmitToggle');
+      if (enterToSubmit) enterToSubmit.checked = settings.enterToSubmit !== false;
+
+      const batchFolders = document.getElementById('batchIncludeFoldersToggle');
+      if (batchFolders) batchFolders.checked = settings.batchIncludeFolders !== false;
+
+      const convertSpaceColon = document.getElementById('convertSpaceColonToggle');
+      if (convertSpaceColon) convertSpaceColon.checked = settings.convertSpaceColon === true;
+
+      const collapseMultipleSpaces = document.getElementById('collapseMultipleSpacesToggle');
+      if (collapseMultipleSpaces) collapseMultipleSpaces.checked = settings.collapseMultipleSpaces === true;
+
+      const convertPeriodSpace = document.getElementById('convertPeriodSpaceToggle');
+      if (convertPeriodSpace) convertPeriodSpace.checked = settings.convertPeriodSpace === true;
+
+      const lightBtn = document.getElementById('theme-light-btn');
+      const darkBtn = document.getElementById('theme-dark-btn');
+      if (lightBtn && darkBtn) {
+        lightBtn.className = `flex-1 py-2 rounded-lg border font-medium ${!isDark ? 'bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-900/30 dark:border-indigo-500/50 dark:text-indigo-300' : 'bg-gray-50 border-gray-200 text-gray-600 dark:bg-gray-800 dark:border-gray-600 dark:text-gray-400'}`;
+        darkBtn.className = `flex-1 py-2 rounded-lg border font-medium ${isDark ? 'bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-900/30 dark:border-indigo-500/50 dark:text-indigo-300' : 'bg-gray-50 border-gray-200 text-gray-600 dark:bg-gray-800 dark:border-gray-600 dark:text-gray-400'}`;
+      }
+
+      ['small', 'medium', 'large'].forEach(size => {
+        const btn = document.getElementById(`font-${size}-btn`);
+        if (btn) {
+          const active = settings.fontSize === size;
+          btn.className = `flex-1 py-2 rounded-lg border font-medium ${active ? 'bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-900/30 dark:border-indigo-500/50 dark:text-indigo-300' : 'bg-gray-50 border-gray-200 text-gray-600 dark:bg-gray-800 dark:border-gray-600 dark:text-gray-400'}`;
+        }
+      });
+    }
+
+    function toggleSetting(key) {
+      settings[key] = !settings[key];
+      saveSettings();
+    }
+
+    function setTheme(theme) {
+      settings.theme = theme;
+      saveSettings();
+    }
+
+    function setFontSize(size) {
+      settings.fontSize = size;
+      saveSettings();
+    }
+
+    // --- Batch Modal Actions ---
+    function openBatchMoveModal() {
+      if (selectedFolderIds.size === 0 && selectedMemoIds.size === 0) {
+        showToast("移動する項目を選択してください");
+        return;
+      }
+
+      const container = document.getElementById('folderTreeContainer');
+      if (!container) return;
+      container.innerHTML = '';
+
+      const buildTree = (parentId, depth = 0) => {
+        const children = appState.folders.filter(f => f.parentId === parentId && !selectedFolderIds.has(f.id));
+        children.forEach(folder => {
+          const btn = document.createElement('button');
+          btn.className = `w-full text-left py-2 px-3 rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-900/30 flex items-center gap-2 text-sm ${selectedBatchTargetFolderId === folder.id ? 'bg-indigo-100 dark:bg-indigo-900/60 font-bold text-indigo-600 dark:text-indigo-300' : ''}`;
+          btn.style.paddingLeft = `${(depth + 1) * 16}px`;
+          btn.innerHTML = `<i data-lucide="folder" class="w-4 h-4 text-indigo-500"></i> ${escapeHTML(folder.name)}`;
+          btn.onclick = () => {
+            selectedBatchTargetFolderId = folder.id;
+            openBatchMoveModal();
+          };
+          container.appendChild(btn);
+          buildTree(folder.id, depth + 1);
+        });
+      };
+
+      buildTree(null, 0);
+      openModal('batchMoveModal');
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function executeBatchMove() {
+      if (!selectedBatchTargetFolderId) {
+        showToast("移動先のフォルダを選択してください");
+        return;
+      }
+
+      const newState = {
+        folders: appState.folders.map(f => selectedFolderIds.has(f.id) ? { ...f, parentId: selectedBatchTargetFolderId } : f),
+        memos: appState.memos.map(m => selectedMemoIds.has(m.id) ? { ...m, folderId: selectedBatchTargetFolderId } : m)
+      };
+
+      updateState(newState);
+      selectedBatchTargetFolderId = null;
+      closeModal('batchMoveModal');
+      toggleBatchMode();
+      showToast("選択した項目を移動しました");
+    }
+
+    function openBatchDeleteModal() {
+      if (selectedFolderIds.size === 0 && selectedMemoIds.size === 0) {
+        showToast("削除する項目を選択してください");
+        return;
+      }
+
+      const msg = document.getElementById('batchDeleteMsg');
+      if (msg) {
+        msg.textContent = `選択された ${selectedFolderIds.size} 個のフォルダと ${selectedMemoIds.size} 個のメモを削除します。よろしいですか？`;
+      }
+      openModal('batchDeleteConfirmModal');
+    }
+
+    function executeBatchDelete() {
+      const newState = {
+        folders: appState.folders.filter(f => !selectedFolderIds.has(f.id)),
+        memos: appState.memos.filter(m => !selectedMemoIds.has(m.id))
+      };
+
+      updateState(newState);
+      closeModal('batchDeleteConfirmModal');
+      toggleBatchMode();
+      showToast("選択した項目を削除しました");
+    }
+
+    function requestDelete() {
+      if (!contextMenuData) return;
+      const { type, id } = contextMenuData;
+      hideContextMenu();
+      itemToDelete = { type, id };
+      openModal('deleteConfirmModal');
+    }
+
+    function executeSingleDelete() {
+      if (!itemToDelete) return;
+      if (itemToDelete.type === 'folder') {
+        const newState = {
+          ...appState,
+          folders: appState.folders.filter(f => f.id !== itemToDelete.id)
+        };
+        updateState(newState);
+        showToast('フォルダを削除しました');
+      } else if (itemToDelete.type === 'memo') {
+        const newState = {
+          ...appState,
+          memos: appState.memos.filter(m => m.id !== itemToDelete.id)
+        };
+        updateState(newState);
+        showToast('メモを削除しました');
+      }
+      itemToDelete = null;
+      closeModal('deleteConfirmModal');
+    }
+
+    function executeFolderMove() {
+      if (!folderToMove) return;
+      const targetId = document.getElementById('moveTargetSelect').value;
+      const newState = {
+        ...appState,
+        folders: appState.folders.map(f => f.id === folderToMove ? { ...f, parentId: targetId } : f)
+      };
+      updateState(newState);
+      folderToMove = null;
+      closeModal('moveModal');
+      showToast('フォルダを移動しました');
+    }
+
+    // --- Modal Management & Toasts ---
+    function openModal(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.classList.remove('hidden-force');
+      el.classList.add('flex');
+      
+      if (id === 'memoModal') {
+        const noticeContainer = document.getElementById('duplicateNoticeContainer');
+        if (!editingMemoId) {
+          document.getElementById('memoModalTitle').textContent = '記録を追加';
+          document.getElementById('memoInput').innerHTML = '';
+          if (noticeContainer) {
+            noticeContainer.classList.add('hidden-force');
+            noticeContainer.dataset.memoId = '';
+          }
+        } else {
+          document.getElementById('memoModalTitle').textContent = '記録を編集';
+          checkDuplicateMemo();
+        }
+      } else if (id === 'folderModal') {
+        if (!editingFolderId) {
+          document.getElementById('folderModalTitle').textContent = '新規フォルダ';
+          document.getElementById('folderInput').value = '';
+        } else {
+          document.getElementById('folderModalTitle').textContent = 'フォルダ名を編集';
+        }
+      }
+
+      const input = el.querySelector('input[type="text"], textarea, [contenteditable="true"]');
+      if(input) setTimeout(() => input.focus(), 100);
+    }
+
+    function closeModal(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.classList.add('hidden-force');
+      el.classList.remove('flex');
+      if (id === 'folderModal') editingFolderId = null;
+      if (id === 'memoModal') editingMemoId = null;
+    }
+
+    function showToast(msg) {
+      const container = document.getElementById('toastContainer');
+      if (!container) return;
+      const toast = document.createElement('div');
+      toast.className = "bg-gray-900 text-white px-5 py-3 rounded-xl shadow-2xl text-sm font-medium animate-fade-in-up border border-gray-700";
+      toast.textContent = msg;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.3s';
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    function copyToClipboard(text) {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.position = "absolute";
+      textArea.style.left = "-999999px";
+      document.body.prepend(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        showToast('クリップボードにコピーしました');
+      } catch (error) {
+        showToast('コピーに失敗しました');
+      } finally {
+        textArea.remove();
+      }
+    }
+
+    // --- Undo / Redo ---
+    function undo() {
+      if (pastHistory.length === 0) return;
+      const previous = pastHistory.pop();
+      futureHistory.push(JSON.parse(JSON.stringify(appState)));
+      appState = previous;
+      saveToStorage();
+      renderAll();
+    }
+
+    function redo() {
+      if (futureHistory.length === 0) return;
+      const next = futureHistory.pop();
+      pastHistory.push(JSON.parse(JSON.stringify(appState)));
+      appState = next;
+      saveToStorage();
+      renderAll();
+    }
+
+    // --- Event Listener Assignments ---
+    function setupEventListeners() {
+      const deleteBtn = document.getElementById('contextDeleteBtn');
+      if (deleteBtn) {
+        deleteBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          requestDelete();
+        });
+      }
+
+      const moveBtn = document.getElementById('contextMoveBtn');
+      if (moveBtn) {
+        moveBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!contextMenuData || contextMenuData.type !== 'folder') return;
+          folderToMove = contextMenuData.id;
+          hideContextMenu();
+
+          const select = document.getElementById('moveTargetSelect');
+          select.innerHTML = '';
+          const movableFolders = appState.folders.filter(f => f.id !== folderToMove);
+          movableFolders.forEach(f => {
+            const option = document.createElement('option');
+            option.value = f.id;
+            option.textContent = f.name;
+            select.appendChild(option);
+          });
+          openModal('moveModal');
+        });
+      }
+
+      const editBtn = document.getElementById('contextEditBtn');
+      if (editBtn) {
+        editBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!contextMenuData) return;
+          const { type, id } = contextMenuData;
+          hideContextMenu();
+
+          if (type === 'folder') {
+            editingFolderId = id;
+            const folder = appState.folders.find(f => f.id === id);
+            if (folder) {
+              document.getElementById('folderInput').value = folder.name;
+              openModal('folderModal');
+            }
+          } else {
+            editingMemoId = id;
+            const memo = appState.memos.find(m => m.id === id);
+            if (memo) {
+              document.getElementById('memoModalTitle').textContent = '記録を編集';
+              document.getElementById('memoInput').innerHTML = memo.html || escapeHTML(memo.text);
+              openModal('memoModal');
+            }
+          }
+        });
+      }
+
+      const memoInputEl = document.getElementById('memoInput');
+      if (memoInputEl) {
+        memoInputEl.addEventListener('input', () => {
+          checkDuplicateMemo();
+        });
+      }
+
+      document.addEventListener('pointerdown', (e) => {
+        if (!e.target.closest('#contextMenu') && contextMenuData) {
+          hideContextMenu();
+        }
+      });
+
+      // File input listener
+      const fileInput = document.getElementById('fileInput');
+      if (fileInput) {
+        fileInput.addEventListener('change', (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            try {
+              const parsed = JSON.parse(event.target.result);
+              if (parsed.folders && parsed.memos) {
+                appState = { folders: parsed.folders, memos: parsed.memos };
+                if (parsed.settings) settings = { ...defaultSettings, ...parsed.settings };
+                saveToStorage();
+                currentFolderId = 'root';
+                renderAll();
+                showToast("データを読み込みました");
+                closeModal('loadModal');
+              }
+            } catch(err) {
+              showToast("読み込みに失敗しました");
+            }
+          };
+          reader.readAsText(file);
+          e.target.value = '';
+        });
+      }
+
+      // Keyboard Shortcuts
+      window.addEventListener('keydown', (e) => {
+        const isMemoModalOpen = !document.getElementById('memoModal').classList.contains('hidden-force');
+        const isFolderModalOpen = !document.getElementById('folderModal').classList.contains('hidden-force');
+
+        const isYenKey = (e.key === '¥' || e.key === '\\' || e.code === 'IntlYen' || e.code === 'Backslash');
+
+        if (isYenKey && !isMemoModalOpen && !isFolderModalOpen) {
+          e.preventDefault();
+          e.stopPropagation();
+          openModal('memoModal');
+          return;
+        }
+
+        if (isMemoModalOpen && (e.key === '@' || e.key === '＠' || e.code === 'BracketRight')) {
+          const noticeContainer = document.getElementById('duplicateNoticeContainer');
+          if (noticeContainer && !noticeContainer.classList.contains('hidden-force')) {
+            const duplicateMemoId = noticeContainer.dataset.memoId;
+            if (duplicateMemoId) {
+              e.preventDefault();
+              e.stopPropagation();
+              openDuplicateMemoEdit(duplicateMemoId);
+              return;
+            }
+          }
+        }
+
+        if (e.key === 'Enter' && settings.enterToSubmit && !e.shiftKey) {
+          if (isMemoModalOpen) {
+            e.preventDefault();
+            e.stopPropagation();
+            saveMemo();
+          } else if (isFolderModalOpen) {
+            e.preventDefault();
+            e.stopPropagation();
+            saveFolder();
+          }
+        }
+      }, true);
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>
